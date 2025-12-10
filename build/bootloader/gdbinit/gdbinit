@@ -1,0 +1,2 @@
+source /home/andresbb490s/rover5/build/bootloader/gdbinit/symbols
+source /home/andresbb490s/rover5/build/bootloader/gdbinit/connect

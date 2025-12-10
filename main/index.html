@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ESP32 Rover Control</title>
+    <style>
+        /* CSS variables for theme */
+        :root {
+            --bg-color: #1a1a2e;
+            --card-bg: rgba(15, 52, 96, 0.3);
+            --accent: #00d9ff;
+            --accent-dim: rgba(0, 217, 255, 0.1);
+            --text-main: #e0e0e0;
+            --border: #0f3460;
+            --success: #44ff44;
+            --error: #ff4444;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow-x: hidden;
+            touch-action: none; /* Prevent scroll on mobile */
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #16213e; }
+        ::-webkit-scrollbar-thumb { background: #0f3460; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+
+        /* Header */
+        header {
+            background: var(--card-bg);
+            border-bottom: 2px solid var(--border);
+            padding: 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            backdrop-filter: blur(10px);
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+
+        h1 { font-size: 1.5rem; color: var(--accent); text-shadow: 0 0 10px rgba(0, 217, 255, 0.5); margin: 0; }
+        .status-badge { display: flex; align-items: center; gap: 0.5rem; font-size: 0.875rem; font-weight: 500; }
+        .status-dot { width: 12px; height: 12px; border-radius: 50%; box-shadow: 0 0 10px currentColor; transition: all 0.5s; }
+        .connected { background-color: var(--success); color: var(--success); }
+        .disconnected { background-color: var(--error); color: var(--error); animation: pulse 2s infinite; }
+
+        /* Layout */
+        main {
+            flex: 1;
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+            max-width: 1200px;
+            margin: 0 auto;
+            width: 100%;
+            overflow-y: auto;
+        }
+
+        .grid-row { display: grid; grid-template-columns: 1fr; gap: 1.5rem; }
+        @media(min-width: 768px) { .grid-row { grid-template-columns: 1fr 1fr; } }
+
+        .card {
+            background: rgba(15, 52, 96, 0.2);
+            border: 1px solid rgba(15, 52, 96, 0.5);
+            border-radius: 12px;
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* Joystick */
+        #joystick-container {
+            position: relative;
+            width: 250px;
+            height: 250px;
+            border-radius: 50%;
+            background: var(--accent-dim);
+            border: 4px solid var(--border);
+            box-shadow: inset 0 0 30px rgba(0, 217, 255, 0.2);
+            touch-action: none;
+            cursor: crosshair;
+        }
+
+        #joystick-knob {
+            position: absolute;
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--accent) 0%, var(--border) 100%);
+            box-shadow: 0 0 20px rgba(0, 217, 255, 0.6);
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            cursor: grab;
+        }
+        #joystick-knob:active { cursor: grabbing; }
+
+        #joystick-indicator {
+            position: absolute;
+            top: 50%; left: 50%;
+            width: 0; height: 0;
+            border-left: 20px solid transparent;
+            border-right: 20px solid transparent;
+            border-bottom: 40px solid rgba(0, 217, 255, 0.5);
+            transform-origin: bottom center;
+            transform: translate(-50%, -100%) scale(0);
+            transition: transform 0.1s;
+            pointer-events: none;
+        }
+
+        /* Telemetry */
+        .telemetry-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            width: 100%;
+        }
+        .stat-box {
+            background: rgba(0,0,0,0.3);
+            border: 1px solid var(--border);
+            padding: 0.75rem;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .stat-label { font-size: 0.75rem; color: var(--accent); display: block; margin-bottom: 0.25rem; }
+        .stat-value { font-size: 1.25rem; font-weight: bold; color: #fff; }
+        
+        .motor-bars { display: flex; width: 100%; gap: 1rem; margin-bottom: 1rem; }
+        .motor-track { flex: 1; height: 120px; background: rgba(0,0,0,0.3); border-radius: 4px; position: relative; overflow: hidden; display: flex; align-items: flex-end; justify-content: center; border: 1px solid var(--border);}
+        .motor-fill { width: 100%; background: linear-gradient(to top, var(--border), var(--accent)); transition: height 0.1s; opacity: 0.8; box-shadow: 0 0 10px var(--accent-dim); }
+        .motor-label { position: absolute; bottom: 5px; width: 100%; text-align: center; font-size: 0.8rem; text-shadow: 0 0 2px black; z-index: 2; pointer-events: none; }
+
+        /* Charts */
+        .charts-container { display: grid; grid-template-columns: 1fr; gap: 1rem; width: 100%; }
+        @media(min-width: 768px) { .charts-container { grid-template-columns: 1fr 1fr; } }
+        .chart-box { height: 250px; width: 100%; position: relative; border: 1px solid var(--border); border-radius: 8px; background: rgba(15, 52, 96, 0.1); padding: 10px; }
+        canvas { width: 100%; height: 100%; display: block; }
+
+        footer { text-align: center; padding: 1rem; font-size: 0.75rem; color: #6b7280; border-top: 1px solid var(--border); background: rgba(15, 52, 96, 0.1); }
+
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+    </style>
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://aistudiocdn.com/react@^19.2.1",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.1/",
+    "react/": "https://aistudiocdn.com/react@^19.2.1/",
+    "recharts": "https://aistudiocdn.com/recharts@^3.5.1"
+  }
+}
+</script>
+</head>
+<body>
+    <header>
+        <h1>🚗 ESP32 Rover</h1>
+        <div class="status-badge">
+            <div id="status-dot" class="status-dot disconnected"></div>
+            <span id="status-text">Disconnected</span>
+        </div>
+    </header>
+
+    <main>
+        <div class="grid-row">
+            <!-- Joystick -->
+            <div class="card">
+                <h2 style="color:var(--accent); margin-bottom: 1rem; text-transform: uppercase; font-size: 0.9rem; letter-spacing: 1px; font-weight: bold;">Manual Control</h2>
+                <div id="joystick-container">
+                    <div id="joystick-indicator"></div>
+                    <div style="position: absolute; top: 50%; left: 50%; width: 10px; height: 10px; background: var(--accent); border-radius: 50%; transform: translate(-50%, -50%); box-shadow: 0 0 10px var(--accent);"></div>
+                    <div id="joystick-knob"></div>
+                </div>
+                <div id="joystick-debug" style="margin-top: 1rem; font-family: monospace; color: var(--accent); font-size: 0.8rem;">
+                    A: 0° | M: 0%
+                </div>
+                <p style="margin-top: 0.5rem; font-size: 0.75rem; color: #6b7280;">Drag to drive</p>
+            </div>
+
+            <!-- Telemetry -->
+            <div class="card" style="align-items: stretch;">
+                <h2 style="color:var(--accent); margin-bottom: 1rem; font-size: 1.2rem; font-weight: bold;">📊 Telemetry</h2>
+                <div class="motor-bars">
+                    <div class="motor-track">
+                        <span class="motor-label">Left</span>
+                        <div id="bar-l" class="motor-fill" style="height: 0%"></div>
+                    </div>
+                    <div class="motor-track">
+                        <span class="motor-label">Right</span>
+                        <div id="bar-r" class="motor-fill" style="height: 0%"></div>
+                    </div>
+                </div>
+                <div class="telemetry-grid">
+                    <div class="stat-box"><span class="stat-label">L RPM</span><span id="val-lrpm" class="stat-value">0.0</span></div>
+                    <div class="stat-box"><span class="stat-label">R RPM</span><span id="val-rrpm" class="stat-value">0.0</span></div>
+                    <div class="stat-box"><span class="stat-label">Dist L</span><span id="val-ldist" class="stat-value">0.00 m</span></div>
+                    <div class="stat-box"><span class="stat-label">Dist R</span><span id="val-rdist" class="stat-value">0.00 m</span></div>
+                    <div class="stat-box" style="grid-column: span 2;"><span class="stat-label">Free Heap</span><span id="val-heap" class="stat-value">0</span></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Charts -->
+        <div class="grid-row charts-container">
+            <div class="card" style="align-items: stretch;">
+                <h3 style="color: #ff6b6b; margin-bottom: 0.5rem; font-weight: bold;">🌡️ Temperature</h3>
+                <div class="chart-box">
+                    <canvas id="chart-temp"></canvas>
+                </div>
+                <div id="val-temp" style="text-align: center; color: #ff6b6b; font-size: 1.5rem; font-weight: bold; margin-top: 0.5rem;">--°C</div>
+            </div>
+            <div class="card" style="align-items: stretch;">
+                <h3 style="color: #51cf66; margin-bottom: 0.5rem; font-weight: bold;">💧 Humidity</h3>
+                <div class="chart-box">
+                    <canvas id="chart-hum"></canvas>
+                </div>
+                <div id="val-hum" style="text-align: center; color: #51cf66; font-size: 1.5rem; font-weight: bold; margin-top: 0.5rem;">--%</div>
+            </div>
+        </div>
+    </main>
+
+    <footer>
+        ESP32 Rover Interface &bull; Offline Capable
+    </footer>
+
+    <script>
+        /**
+         * Services: WebSocket Connection
+         */
+        let ws;
+        let reconnectTimer;
+        
+        function connect() {
+            // Check if we are hosted on the device or locally developing
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const host = window.location.hostname || 'localhost'; 
+            // If on localhost, assume dev server port 8080, else use relative path
+            const url = (host === 'localhost' || host === '') ? 'ws://localhost:8080/ws' : `${protocol}//${window.location.host}/ws`;
+            
+            console.log('Connecting to:', url);
+            try {
+                ws = new WebSocket(url);
+
+                ws.onopen = () => {
+                    console.log('WS Connected');
+                    document.getElementById('status-dot').className = 'status-dot connected';
+                    document.getElementById('status-text').innerText = 'Connected';
+                    if(reconnectTimer) clearTimeout(reconnectTimer);
+                };
+
+                ws.onclose = () => {
+                    console.log('WS Disconnected');
+                    document.getElementById('status-dot').className = 'status-dot disconnected';
+                    document.getElementById('status-text').innerText = 'Disconnected';
+                    reconnectTimer = setTimeout(connect, 3000);
+                };
+
+                ws.onerror = (e) => {
+                    console.error('WS Error', e);
+                    ws.close();
+                };
+
+                ws.onmessage = (e) => {
+                    try {
+                        const msg = JSON.parse(e.data);
+                        if(msg.type === 'telemetry') updateTelemetry(msg);
+                    } catch(err) { console.error(err); }
+                };
+            } catch(e) {
+                console.error("Connection failed", e);
+                reconnectTimer = setTimeout(connect, 3000);
+            }
+        }
+
+        function sendControl(angle, magnitude) {
+            if(ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ 
+                    type: 'control', 
+                    angle, 
+                    magnitude, 
+                    timestamp: Date.now() 
+                }));
+            }
+        }
+
+        /**
+         * Telemetry & DOM Updates
+         */
+        const historyTemp = [];
+        const historyHum = [];
+        const MAX_POINTS = 50;
+
+        function updateTelemetry(data) {
+            // Text Values
+            document.getElementById('val-lrpm').innerText = (data.left_rpm || 0).toFixed(1);
+            document.getElementById('val-rrpm').innerText = (data.right_rpm || 0).toFixed(1);
+            document.getElementById('val-ldist').innerText = (data.left_distance || 0).toFixed(2) + ' m';
+            document.getElementById('val-rdist').innerText = (data.right_distance || 0).toFixed(2) + ' m';
+            document.getElementById('val-heap').innerText = (data.free_heap || 0).toLocaleString();
+            
+            // Motor Bars
+            const lp = Math.min(Math.abs(data.left_pwm || 0)/255 * 100, 100);
+            const rp = Math.min(Math.abs(data.right_pwm || 0)/255 * 100, 100);
+            document.getElementById('bar-l').style.height = lp + '%';
+            document.getElementById('bar-r').style.height = rp + '%';
+
+            // Charts
+            if(data.dht_valid) {
+                const now = new Date().toLocaleTimeString([], {hour12: false});
+                updateHistory(historyTemp, data.temperature, now);
+                updateHistory(historyHum, data.humidity, now);
+                
+                document.getElementById('val-temp').innerText = data.temperature.toFixed(1) + '°C';
+                document.getElementById('val-hum').innerText = data.humidity.toFixed(1) + '%';
+                
+                requestAnimationFrame(() => {
+                    drawChart(ctxTemp, historyTemp, '#ff6b6b');
+                    drawChart(ctxHum, historyHum, '#51cf66');
+                });
+            }
+        }
+
+        function updateHistory(arr, val, time) {
+            arr.push({ val, time });
+            if(arr.length > MAX_POINTS) arr.shift();
+        }
+
+        /**
+         * Custom Lightweight Charting (Canvas)
+         * Replaces Recharts/Chart.js for offline capability and small size.
+         */
+        const canvasTemp = document.getElementById('chart-temp');
+        const canvasHum = document.getElementById('chart-hum');
+        const ctxTemp = canvasTemp.getContext('2d');
+        const ctxHum = canvasHum.getContext('2d');
+
+        function resizeCanvas(canvas) {
+            const rect = canvas.parentElement.getBoundingClientRect();
+            // Handle high DPI displays
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = rect.width * dpr;
+            canvas.height = rect.height * dpr;
+            const ctx = canvas.getContext('2d');
+            ctx.scale(dpr, dpr);
+            // Reset scale for styling (CSS handles display size)
+            canvas.style.width = rect.width + 'px';
+            canvas.style.height = rect.height + 'px';
+        }
+
+        function initCharts() {
+            resizeCanvas(canvasTemp);
+            resizeCanvas(canvasHum);
+        }
+        
+        window.addEventListener('resize', initCharts);
+        initCharts();
+
+        function drawChart(ctx, data, color) {
+            const w = ctx.canvas.width / (window.devicePixelRatio || 1);
+            const h = ctx.canvas.height / (window.devicePixelRatio || 1);
+            
+            ctx.clearRect(0, 0, w, h);
+            
+            if(data.length < 2) return;
+
+            // Scale Y axis
+            let min = Infinity, max = -Infinity;
+            data.forEach(d => {
+                if(d.val < min) min = d.val;
+                if(d.val > max) max = d.val;
+            });
+            const range = max - min || 1;
+            const padding = range * 0.2; // 20% padding
+            min -= padding;
+            max += padding;
+
+            // Mapping functions
+            const getX = (i) => (i / (data.length - 1)) * w;
+            const getY = (v) => h - ((v - min) / (max - min)) * h;
+
+            // Draw Grid
+            ctx.strokeStyle = '#2a3b55';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            for(let i=1; i<4; i++) {
+                const y = i * (h/4);
+                ctx.moveTo(0, y); ctx.lineTo(w, y);
+            }
+            ctx.stroke();
+
+            // Draw Area Gradient
+            ctx.beginPath();
+            ctx.moveTo(0, h);
+            data.forEach((d, i) => {
+                ctx.lineTo(getX(i), getY(d.val));
+            });
+            ctx.lineTo(w, h);
+            ctx.closePath();
+            
+            const gradient = ctx.createLinearGradient(0, 0, 0, h);
+            gradient.addColorStop(0, color);
+            gradient.addColorStop(1, 'rgba(0,0,0,0)');
+            ctx.fillStyle = gradient;
+            ctx.globalAlpha = 0.2;
+            ctx.fill();
+            ctx.globalAlpha = 1.0;
+
+            // Draw Line
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            ctx.lineJoin = 'round';
+            ctx.beginPath();
+            data.forEach((d, i) => {
+                if(i===0) ctx.moveTo(getX(i), getY(d.val));
+                else ctx.lineTo(getX(i), getY(d.val));
+            });
+            ctx.stroke();
+        }
+
+        /**
+         * Joystick Controller
+         */
+        const joyContainer = document.getElementById('joystick-container');
+        const joyKnob = document.getElementById('joystick-knob');
+        const joyIndicator = document.getElementById('joystick-indicator');
+        const joyDebug = document.getElementById('joystick-debug');
+        
+        let isDragging = false;
+        let joyState = { angle: 0, magnitude: 0 };
+        
+        function handleStart(e) {
+            isDragging = true;
+            handleMove(e);
+        }
+
+        function handleMove(e) {
+            if(!isDragging) return;
+            e.preventDefault(); // Stop scrolling on touch
+            
+            const rect = joyContainer.getBoundingClientRect();
+            const centerX = rect.width / 2;
+            const centerY = rect.height / 2;
+            const maxR = centerX - 40; // container radius - knob radius
+
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+            let dx = clientX - rect.left - centerX;
+            let dy = clientY - rect.top - centerY;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+
+            // Clamp distance
+            if(dist > maxR) {
+                const ratio = maxR / dist;
+                dx *= ratio;
+                dy *= ratio;
+            }
+
+            joyKnob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+
+            // Calculate Angle/Mag
+            let angle = Math.atan2(-dy, dx); // dy is negative up in DOM, so -dy gives standard Cartesian
+            if(angle < 0) angle += 2 * Math.PI;
+            const magnitude = Math.min(dist / maxR, 1.0);
+
+            joyState = { angle, magnitude };
+            joyDebug.innerText = `A: ${(angle * 180 / Math.PI).toFixed(0)}° | M: ${(magnitude*100).toFixed(0)}%`;
+
+            // Update direction indicator
+            if(magnitude > 0.1) {
+                const deg = (angle * 180 / Math.PI) + 90;
+                joyIndicator.style.transform = `translate(-50%, -100%) rotate(${deg}deg) scale(${magnitude})`;
+            } else {
+                joyIndicator.style.transform = `translate(-50%, -100%) scale(0)`;
+            }
+        }
+
+        function handleEnd() {
+            isDragging = false;
+            joyKnob.style.transform = `translate(-50%, -50%)`;
+            joyIndicator.style.transform = `translate(-50%, -100%) scale(0)`;
+            joyState = { angle: 0, magnitude: 0 };
+            joyDebug.innerText = `A: 0° | M: 0%`;
+            sendControl(0, 0); // Stop immediately
+        }
+
+        joyContainer.addEventListener('mousedown', handleStart);
+        joyContainer.addEventListener('touchstart', handleStart, {passive: false});
+        
+        window.addEventListener('mousemove', handleMove);
+        window.addEventListener('mouseup', handleEnd);
+        window.addEventListener('touchmove', handleMove, {passive: false});
+        window.addEventListener('touchend', handleEnd);
+
+        // Control Loop (20Hz)
+        setInterval(() => {
+            if(isDragging) {
+                sendControl(joyState.angle, joyState.magnitude);
+            }
+        }, 50);
+
+        // Start connection
+        connect();
+    </script>
+</body>
+</html>
